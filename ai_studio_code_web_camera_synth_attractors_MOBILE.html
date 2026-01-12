@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Attractor Synth</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
+    <style>
+        :root { --neon: #00ffcc; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; color: white; touch-action: none; }
+        
+        /* Скрываемая панель настроек */
+        #ui-panel {
+            position: absolute; top: 10px; left: 10px; width: 260px;
+            background: rgba(10, 10, 10, 0.9); border: 1px solid var(--neon);
+            border-radius: 12px; padding: 15px; z-index: 100;
+            transition: transform 0.3s ease;
+            transform: translateX(-120%); /* По умолчанию скрыта */
+        }
+        #ui-panel.active { transform: translateX(0); }
+
+        #toggle-ui {
+            position: absolute; top: 10px; right: 10px;
+            background: rgba(0,0,0,0.6); border: 1px solid var(--neon);
+            color: var(--neon); padding: 10px; border-radius: 8px; z-index: 101;
+        }
+
+        h2 { font-size: 14px; color: var(--neon); text-transform: uppercase; margin: 10px 0; }
+        .control-group { margin-bottom: 15px; }
+        label { display: block; font-size: 11px; margin-bottom: 5px; }
+        
+        input[type="range"] { width: 100%; height: 25px; } /* Больше зона касания */
+        select { width: 100%; padding: 10px; background: #222; color: white; border-radius: 5px; border: 1px solid #444; }
+
+        #video-container {
+            position: absolute; bottom: 10px; left: 10px;
+            width: 100px; height: 130px; border: 1px solid var(--neon);
+            border-radius: 8px; overflow: hidden; transform: scaleX(-1);
+            opacity: 0.7; pointer-events: none;
+        }
+        video { width: 100%; height: 100%; object-fit: cover; }
+
+        #overlay {
+            position: fixed; inset: 0; background: #000;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 2000;
+        }
+        #startBtn { 
+            padding: 20px 40px; background: var(--neon); color: black; 
+            border: none; border-radius: 50px; font-weight: bold; font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="overlay">
+    <h1 style="color: var(--neon); font-size: 18px; margin-bottom: 20px;">AI PARTICLE SYNTH</h1>
+    <button id="startBtn">START EXPERIENCE</button>
+    <p style="font-size: 10px; margin-top: 20px; opacity: 0.6;">Requires Camera & Audio</p>
+</div>
+
+<button id="toggle-ui">Settings</button>
+
+<div id="ui-panel">
+    <h2>System</h2>
+    <div class="control-group">
+        <label>Attractor Type</label>
+        <select id="shapeSelector">
+            <option value="lorenz">Lorenz</option>
+            <option value="halvorsen">Halvorsen</option>
+            <option value="aizawa">Aizawa</option>
+            <option value="sprottB">Sprott B</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label>Morph Speed</label>
+        <input type="range" id="morphRange" min="0.02" max="0.2" step="0.01" value="0.06">
+    </div>
+
+    <h2>Audio</h2>
+    <div class="control-group">
+        <label>Waveform</label>
+        <select id="waveSelector">
+            <option value="sine">Sine</option>
+            <option value="triangle">Triangle</option>
+            <option value="sawtooth">Sawtooth</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label>Reverb</label>
+        <input type="range" id="reverbRange" min="0" max="1" step="0.1" value="0.5">
+    </div>
+    <div id="status" style="font-size: 10px; color: red;">Camera Offline</div>
+</div>
+
+<div id="video-container">
+    <video id="webcam" autoplay playsinline></video>
+</div>
+
+<script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+    // Оптимизация для мобильных: меньше частиц
+    const PARTICLE_COUNT = 4000;
+    let targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+    let gScale = 1, gExp = 0.5;
+    const settings = { size: 0.05, morph: 0.06, shape: 'lorenz' };
+
+    // THREE.JS
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: false }); // Отключаем сглаживание для FPS
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Ограничиваем пиксель-рейтио
+    document.body.appendChild(renderer.domElement);
+    camera.position.z = 25;
+
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    
+    const material = new THREE.PointsMaterial({
+        size: settings.size, color: 0x00ffcc, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const particles = new THREE.Points(geometry, material);
+    scene.add(particles);
+
+    // AUDIO
+    let synth, filter, reverb;
+    function initAudio() {
+        filter = new Tone.Filter(1000, "lowpass").toDestination();
+        reverb = new Tone.Reverb({ decay: 2, wet: 0.5 }).connect(filter);
+        synth = new Tone.PolySynth(Tone.Synth).connect(reverb);
+        synth.set({ envelope: { attack: 0.1, release: 1.5 } });
+        Tone.Destination.volume.value = -10;
+        synth.triggerAttack(["C3", "G3"]);
+    }
+
+    // MATH
+    function generateAttractor() {
+        const arr = new Float32Array(PARTICLE_COUNT * 3);
+        let x = 0.1, y = 0, z = 0, dt = 0.015;
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            if (settings.shape === 'lorenz') {
+                x += (10 * (y - x)) * dt; y += (x * (28 - z) - y) * dt; z += (x * y - (8/3) * z) * dt;
+                arr[i*3]=x*0.4; arr[i*3+1]=y*0.4; arr[i*3+2]=(z-25)*0.4;
+            } else if (settings.shape === 'halvorsen') {
+                let dx = -1.4*x - 4*y - 4*z - y*y; let dy = -1.4*y - 4*z - 4*x - z*z; let dz = -1.4*z - 4*x - 4*y - x*x;
+                x+=dx*dt; y+=dy*dt; z+=dz*dt;
+                arr[i*3]=x*0.6; arr[i*3+1]=y*0.6; arr[i*3+2]=z*0.6;
+            } else {
+                let dx = (z-0.7)*x - 3.5*y; let dy = 3.5*x + (z-0.7)*y; let dz = 0.6 + 0.95*z - (z**3/3) - (x*x + y*y)*(1 + 0.25*z);
+                x+=dx*dt; y+=dy*dt; z+=dz*dt;
+                arr[i*3]=x*4; arr[i*3+1]=y*4; arr[i*3+2]=z*4;
+            }
+        }
+        targetPositions = arr;
+    }
+
+    // HANDS
+    const hands = new window.Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({ 
+        maxNumHands: 1, // Для мобилок лучше ограничить одной рукой для скорости
+        modelComplexity: 0, // Самая быстрая модель
+        minDetectionConfidence: 0.5 
+    });
+    
+    hands.onResults(results => {
+        if (results.multiHandLandmarks && results.multiHandLandmarks[0]) {
+            document.getElementById('status').innerText = "AI Tracking Active";
+            document.getElementById('status').style.color = "#00ffcc";
+            let lm = results.multiHandLandmarks[0];
+            let dist = Math.hypot(lm[0].x - lm[12].x, lm[0].y - lm[12].y);
+            gExp = dist * 8;
+            if (synth) {
+                filter.frequency.rampTo(gExp * 1000 + 200, 0.1);
+            }
+        }
+    });
+
+    const cameraUtils = new window.Camera(document.getElementById('webcam'), {
+        onFrame: async () => { await hands.send({ image: document.getElementById('webcam') }); },
+        width: 480, height: 640,
+        facingMode: "user"
+    });
+
+    // UI CONTROLS
+    document.getElementById('startBtn').onclick = () => {
+        Tone.start(); initAudio(); cameraUtils.start();
+        document.getElementById('overlay').remove();
+    };
+
+    document.getElementById('toggle-ui').onclick = () => {
+        document.getElementById('ui-panel').classList.toggle('active');
+    };
+
+    document.getElementById('shapeSelector').onchange = (e) => { settings.shape = e.target.value; generateAttractor(); };
+    document.getElementById('morphRange').oninput = (e) => { settings.morph = parseFloat(e.target.value); };
+    document.getElementById('waveSelector').onchange = (e) => { synth.set({ oscillator: { type: e.target.value } }); };
+
+    // ANIMATION
+    function animate() {
+        requestAnimationFrame(animate);
+        const posAttr = geometry.attributes.position;
+        for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+            posAttr.array[i] += (targetPositions[i] * gScale - posAttr.array[i]) * settings.morph;
+        }
+        posAttr.needsUpdate = true;
+        particles.rotation.y += 0.005;
+        renderer.render(scene, camera);
+    }
+
+    generateAttractor();
+    animate();
+
+    window.onresize = () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    };
+</script>
+</body>
+</html>
