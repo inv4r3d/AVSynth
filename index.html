@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Monochrome Zen</title>
+    <title>Monochrome AI Synth</title>
+    <!-- Библиотеки -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
     
     <style>
-        :root { --accent: #ffffff; --bg: #000000; --ui-bg: rgba(0, 0, 0, 0.85); }
+        :root { --accent: #ffffff; --bg: #000000; }
         
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
@@ -17,36 +18,40 @@
             font-family: 'Courier New', monospace; color: #fff;
         }
 
-        /* 3D холст всегда на дне */
-        canvas { 
-            position: fixed; top: 0; left: 0; 
-            width: 100% !important; height: 100% !important; 
-            z-index: 1; 
-        }
+        /* 3D сцена */
+        canvas { position: fixed; inset: 0; z-index: 1; }
 
-        /* Кнопка настроек */
+        /* ОКНО ТРАНСЛЯЦИИ (Видное пользователю) */
+        #video-hud {
+            position: fixed; top: 15px; right: 15px;
+            width: 120px; height: 90px;
+            border: 1px solid #444; border-radius: 4px;
+            background: #000; overflow: hidden;
+            z-index: 100; transform: scaleX(-1); /* Отражение */
+        }
+        video { width: 100%; height: 100%; object-fit: cover; }
+
+        /* Кнопки и интерфейс */
         #menu-toggle {
-            position: fixed; top: 20px; left: 20px; z-index: 1000;
-            background: none; border: 1px solid #444; color: #666;
-            padding: 10px 15px; cursor: pointer; font-size: 10px;
-            letter-spacing: 2px; text-transform: uppercase;
+            position: fixed; top: 15px; left: 15px; z-index: 500;
+            background: rgba(0,0,0,0.5); border: 1px solid #444; color: #fff;
+            padding: 10px 15px; cursor: pointer; font-size: 10px; letter-spacing: 2px;
         }
 
-        /* Оверлей настроек */
         #ui-overlay {
-            position: fixed; inset: 0; z-index: 500;
-            background: var(--ui-bg);
+            position: fixed; inset: 0; z-index: 400;
+            background: rgba(0, 0, 0, 0.9);
             display: flex; flex-direction: column; justify-content: center;
-            align-items: center; gap: 30px;
-            opacity: 0; pointer-events: none; transition: 0.4s;
+            align-items: center; opacity: 0; pointer-events: none; transition: 0.3s;
         }
         #ui-overlay.visible { opacity: 1; pointer-events: auto; }
 
-        .control-group { width: 80%; max-width: 400px; display: flex; flex-direction: column; gap: 20px; }
-        .fader-row { display: flex; flex-direction: column; gap: 10px; }
-        .fader-row label { font-size: 10px; letter-spacing: 2px; color: #888; text-transform: uppercase; }
+        .controls { width: 85%; max-width: 350px; display: flex; flex-direction: column; gap: 25px; }
+        
+        /* Монохромные ползунки */
+        .fader { display: flex; flex-direction: column; gap: 8px; }
+        .fader label { font-size: 9px; letter-spacing: 2px; color: #666; text-transform: uppercase; }
 
-        /* Кастомные монохромные ползунки */
         input[type="range"] {
             -webkit-appearance: none; width: 100%; background: transparent;
         }
@@ -54,99 +59,101 @@
             width: 100%; height: 1px; background: #333;
         }
         input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none; height: 16px; width: 16px; 
-            background: #fff; border-radius: 50%; cursor: pointer; margin-top: -8px;
-            border: 1px solid #000;
-        }
-        input[type="range"]::-moz-range-thumb {
-            height: 16px; width: 16px; background: #fff; border-radius: 50%; border: none;
+            -webkit-appearance: none; height: 18px; width: 18px; 
+            background: #fff; border-radius: 50%; cursor: pointer; margin-top: -9px;
+            border: 2px solid #000;
         }
 
         select {
             background: #000; border: 1px solid #333; color: #fff;
-            padding: 12px; font-size: 12px; width: 100%;
-        }
-
-        /* Видео скрыто, но работает для ИИ */
-        #webcam {
-            position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;
+            padding: 12px; font-size: 11px; width: 100%; outline: none;
         }
 
         #start-screen {
-            position: fixed; inset: 0; background: #000; z-index: 2000;
+            position: fixed; inset: 0; background: #000; z-index: 1000;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
         }
         #start-btn {
             background: none; border: 1px solid #fff; color: #fff;
-            padding: 20px 40px; cursor: pointer; letter-spacing: 5px; font-size: 14px;
+            padding: 20px 40px; cursor: pointer; letter-spacing: 5px; font-weight: bold;
         }
     </style>
 </head>
 <body>
 
+<!-- Экран запуска -->
 <div id="start-screen">
-    <button id="start-btn">INITIALIZE CORE</button>
+    <button id="start-btn">INITIALIZE SYSTEM</button>
 </div>
 
-<button id="menu-toggle">Settings</button>
+<!-- Окно камеры -->
+<div id="video-hud">
+    <video id="webcam" autoplay playsinline muted></video>
+</div>
 
+<!-- Переключатель настроек -->
+<button id="menu-toggle">SETTINGS</button>
+
+<!-- Настройки -->
 <div id="ui-overlay">
-    <div class="control-group">
-        <div class="fader-row">
-            <label>Shape</label>
+    <div class="controls">
+        <div class="fader">
+            <label>Attractor Geometry</label>
             <select id="shape-select">
-                <option value="lorenz">Lorenz</option>
-                <option value="halvorsen">Halvorsen</option>
-                <option value="aizawa">Aizawa</option>
+                <option value="lorenz">Lorenz Chaos</option>
+                <option value="halvorsen">Halvorsen Cycle</option>
+                <option value="aizawa">Aizawa Sphere</option>
                 <option value="sprottB">Sprott B</option>
             </select>
         </div>
         
-        <div class="fader-row">
-            <label>Morph Speed</label>
-            <input type="range" id="morph-slider" min="0.01" max="0.2" step="0.01" value="0.05">
+        <div class="fader">
+            <label>Morph Fluidity</label>
+            <input type="range" id="morph-slider" min="0.01" max="0.2" step="0.01" value="0.06">
         </div>
 
-        <div class="fader-row">
-            <label>Harmonicity</label>
+        <div class="fader">
+            <label>Synth Harmonicity</label>
             <input type="range" id="harm-fader" min="0.5" max="10" step="0.1" value="3">
         </div>
 
-        <div class="fader-row">
-            <label>Modulation</label>
-            <input type="range" id="mod-fader" min="0" max="50" step="1" value="10">
+        <div class="fader">
+            <label>Modulation depth</label>
+            <input type="range" id="mod-fader" min="0" max="60" step="1" value="15">
         </div>
 
-        <div class="fader-row">
-            <label>Space (Reverb)</label>
+        <div class="fader">
+            <label>Space Depth</label>
             <input type="range" id="verb-fader" min="0" max="1" step="0.05" value="0.4">
         </div>
         
-        <button onclick="document.getElementById('ui-overlay').classList.remove('visible')" style="background: #fff; color:#000; border:none; padding:10px; margin-top:20px; cursor:pointer;">CLOSE</button>
+        <button onclick="document.getElementById('ui-overlay').classList.remove('visible')" 
+                style="background:#fff; color:#000; border:none; padding:12px; margin-top:10px; cursor:pointer; font-size:10px; letter-spacing:2px;">
+            BACK TO ZEN
+        </button>
     </div>
 </div>
-
-<video id="webcam" autoplay playsinline muted></video>
 
 <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 
+    // Состояние
     const STATE = {
-        count: window.innerWidth < 600 ? 5000 : 12000, // Оптимизация для мобилок
+        count: window.innerWidth < 600 ? 6000 : 12000,
         shape: 'lorenz',
-        morph: 0.05,
+        morph: 0.06,
         gScale: 1,
         chaos: 0
     };
 
     // --- THREE.JS ---
     const scene = new THREE.Scene();
-    const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: false }); // Выключил antialias для FPS
+    const camera3D = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     document.body.appendChild(renderer.domElement);
-    threeCamera.position.z = 25;
+    camera3D.position.z = 25;
 
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(STATE.count * 3);
@@ -154,7 +161,7 @@
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 0.02, color: 0xffffff, transparent: true,
+        size: 0.025, color: 0xffffff, transparent: true,
         blending: THREE.AdditiveBlending, opacity: 0.6, depthWrite: false
     });
     const points = new THREE.Points(geometry, material);
@@ -164,10 +171,10 @@
     let synth, filter, reverb;
     function initAudio() {
         filter = new Tone.Filter(2000, "lowpass").toDestination();
-        reverb = new Tone.Reverb({ decay: 5, wet: 0.4 }).connect(filter);
+        reverb = new Tone.Reverb({ decay: 4, wet: 0.4 }).connect(filter);
         synth = new Tone.PolySynth(Tone.FMSynth).connect(reverb);
         synth.triggerAttack(["C2", "G2"]);
-        Tone.Destination.volume.value = -12;
+        Tone.Destination.volume.value = -10;
     }
 
     // --- ATTRACTORS ---
@@ -195,11 +202,11 @@
         targets = arr;
     }
 
-    // --- HANDS ---
+    // --- MEDIA PIPE HANDS ---
     const hands = new window.Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
     hands.setOptions({ 
         maxNumHands: 2, 
-        modelComplexity: window.innerWidth < 600 ? 0 : 1, // 0 - быстрее для мобилок
+        modelComplexity: window.innerWidth < 600 ? 0 : 1, 
         minDetectionConfidence: 0.5 
     });
     
@@ -211,7 +218,7 @@
             
             STATE.chaos = (1 - tension) * 4;
             if (synth) {
-                filter.frequency.rampTo(tension * 5000 + 100, 0.1);
+                filter.frequency.rampTo(tension * 5000 + 150, 0.1);
             }
 
             if (res.multiHandLandmarks[1]) {
@@ -222,15 +229,20 @@
         }
     });
 
-    const mpCamera = new window.Camera(document.getElementById('webcam'), {
-        onFrame: async () => await hands.send({ image: document.getElementById('webcam') }),
-        width: 640, height: 480,
-        facingMode: "user"
+    // Настройка камеры MediaPipe
+    const videoElement = document.getElementById('webcam');
+    const mpCamera = new window.Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({ image: videoElement });
+        },
+        width: 640, height: 480
     });
 
-    // --- UI ---
+    // --- UI ЛОГИКА ---
     document.getElementById('start-btn').onclick = () => {
-        Tone.start(); initAudio(); mpCamera.start();
+        Tone.start(); 
+        initAudio(); 
+        mpCamera.start(); // ЗАПУСК КАМЕРЫ
         document.getElementById('start-screen').style.display = 'none';
     };
 
@@ -238,13 +250,14 @@
         document.getElementById('ui-overlay').classList.toggle('visible');
     };
 
+    // Слушатели ползунков
     document.getElementById('shape-select').onchange = (e) => { STATE.shape = e.target.value; updateTargets(); };
     document.getElementById('morph-slider').oninput = (e) => { STATE.morph = parseFloat(e.target.value); };
     document.getElementById('harm-fader').oninput = (e) => { synth.set({ harmonicity: parseFloat(e.target.value) }); };
     document.getElementById('mod-fader').oninput = (e) => { synth.set({ modulationIndex: parseFloat(e.target.value) }); };
     document.getElementById('verb-fader').oninput = (e) => { reverb.wet.value = parseFloat(e.target.value); };
 
-    // --- LOOP ---
+    // --- ЦИКЛ АНИМАЦИИ ---
     function animate() {
         requestAnimationFrame(animate);
         const pos = geometry.attributes.position;
@@ -255,7 +268,7 @@
         }
         pos.needsUpdate = true;
         points.rotation.y += 0.003;
-        renderer.render(scene, threeCamera);
+        renderer.render(scene, camera3D);
     }
 
     updateTargets();
@@ -263,8 +276,8 @@
 
     window.onresize = () => {
         renderer.setSize(window.innerWidth, window.innerHeight);
-        threeCamera.aspect = window.innerWidth/window.innerHeight;
-        threeCamera.updateProjectionMatrix();
+        camera3D.aspect = window.innerWidth/window.innerHeight;
+        camera3D.updateProjectionMatrix();
     };
 </script>
 </body>
