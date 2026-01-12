@@ -2,224 +2,287 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Mobile Attractor Synth</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monochrome Attractor Synth</title>
+    <!-- Загружаем библиотеки -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
+    
     <style>
-        :root { --neon: #00ffcc; }
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; color: white; touch-action: none; }
-        
-        /* Скрываемая панель настроек */
-        #ui-panel {
-            position: absolute; top: 10px; left: 10px; width: 260px;
-            background: rgba(10, 10, 10, 0.9); border: 1px solid var(--neon);
-            border-radius: 12px; padding: 15px; z-index: 100;
-            transition: transform 0.3s ease;
-            transform: translateX(-120%); /* По умолчанию скрыта */
+        :root {
+            --bg: #000000;
+            --panel: #0a0a0a;
+            --accent: #ffffff;
+            --border: #222222;
+            --text: #666666;
         }
-        #ui-panel.active { transform: translateX(0); }
 
-        #toggle-ui {
+        body { 
+            margin: 0; overflow: hidden; background: var(--bg); 
+            font-family: 'Courier New', monospace; color: var(--text); 
+        }
+
+        #ui-root {
+            position: absolute; inset: 0; pointer-events: none;
+            display: grid; grid-template-columns: 250px 1fr 250px;
+            grid-template-rows: 1fr 140px; padding: 20px; gap: 20px;
+            z-index: 10;
+        }
+
+        .panel {
+            background: var(--panel); border: 1px solid var(--border);
+            padding: 15px; pointer-events: auto;
+            display: flex; flex-direction: column; gap: 10px;
+        }
+
+        h2 {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 2px;
+            color: #fff; margin: 0 0 5px 0; border-bottom: 1px solid var(--border);
+            padding-bottom: 5px;
+        }
+
+        .control { display: flex; flex-direction: column; gap: 4px; }
+        label { font-size: 9px; display: flex; justify-content: space-between; }
+        label span { color: #fff; }
+
+        select, input[type="range"] {
+            background: #000; border: 1px solid var(--border); color: #fff;
+            outline: none; width: 100%;
+        }
+
+        input[type="range"] { -webkit-appearance: none; height: 2px; margin: 10px 0; }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 12px; width: 4px; background: #fff; cursor: pointer;
+        }
+
+        /* Нижняя панель с ручками */
+        .bottom-bar {
+            grid-column: 1 / 4; display: flex; justify-content: space-around;
+            align-items: center; border-top: 1px solid var(--border);
+        }
+
+        .knob-box { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        .knob-visual {
+            width: 30px; height: 30px; border: 1px solid #333; border-radius: 50%;
+            position: relative;
+        }
+        .knob-visual::after {
+            content: ''; position: absolute; top: 2px; left: 14px;
+            width: 2px; height: 8px; background: #fff; transform-origin: 50% 13px;
+            transform: rotate(0deg);
+        }
+
+        #video-preview {
             position: absolute; top: 10px; right: 10px;
-            background: rgba(0,0,0,0.6); border: 1px solid var(--neon);
-            color: var(--neon); padding: 10px; border-radius: 8px; z-index: 101;
+            width: 120px; height: 90px; border: 1px solid var(--border);
+            transform: scaleX(-1); opacity: 0.2;
         }
-
-        h2 { font-size: 14px; color: var(--neon); text-transform: uppercase; margin: 10px 0; }
-        .control-group { margin-bottom: 15px; }
-        label { display: block; font-size: 11px; margin-bottom: 5px; }
-        
-        input[type="range"] { width: 100%; height: 25px; } /* Больше зона касания */
-        select { width: 100%; padding: 10px; background: #222; color: white; border-radius: 5px; border: 1px solid #444; }
-
-        #video-container {
-            position: absolute; bottom: 10px; left: 10px;
-            width: 100px; height: 130px; border: 1px solid var(--neon);
-            border-radius: 8px; overflow: hidden; transform: scaleX(-1);
-            opacity: 0.7; pointer-events: none;
-        }
-        video { width: 100%; height: 100%; object-fit: cover; }
 
         #overlay {
-            position: fixed; inset: 0; background: #000;
-            display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 2000;
+            position: fixed; inset: 0; background: #000; z-index: 1000;
+            display: flex; justify-content: center; align-items: center;
         }
-        #startBtn { 
-            padding: 20px 40px; background: var(--neon); color: black; 
-            border: none; border-radius: 50px; font-weight: bold; font-size: 18px;
+        button#start-btn {
+            background: #000; border: 1px solid #fff; color: #fff;
+            padding: 20px 40px; cursor: pointer; letter-spacing: 5px;
         }
+        button#start-btn:hover { background: #fff; color: #000; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <h1 style="color: var(--neon); font-size: 18px; margin-bottom: 20px;">AI PARTICLE SYNTH</h1>
-    <button id="startBtn">START EXPERIENCE</button>
-    <p style="font-size: 10px; margin-top: 20px; opacity: 0.6;">Requires Camera & Audio</p>
+    <button id="start-btn">INITIALIZE MONOCHROME</button>
 </div>
 
-<button id="toggle-ui">Settings</button>
+<div id="ui-root">
+    <div class="panel">
+        <h2>Geometry</h2>
+        <div class="control">
+            <label>Attractor</label>
+            <select id="shape-type">
+                <option value="lorenz">Lorenz</option>
+                <option value="halvorsen">Halvorsen</option>
+                <option value="aizawa">Aizawa</option>
+                <option value="sprottB">Sprott B</option>
+            </select>
+        </div>
+        <div class="control">
+            <label>Morph <span id="val-morph">0.05</span></label>
+            <input type="range" id="morph-slider" min="0.01" max="0.2" step="0.01" value="0.05">
+        </div>
+    </div>
 
-<div id="ui-panel">
-    <h2>System</h2>
-    <div class="control-group">
-        <label>Attractor Type</label>
-        <select id="shapeSelector">
-            <option value="lorenz">Lorenz</option>
-            <option value="halvorsen">Halvorsen</option>
-            <option value="aizawa">Aizawa</option>
-            <option value="sprottB">Sprott B</option>
-        </select>
-    </div>
-    <div class="control-group">
-        <label>Morph Speed</label>
-        <input type="range" id="morphRange" min="0.02" max="0.2" step="0.01" value="0.06">
+    <div></div> <!-- Empty Space -->
+
+    <div class="panel">
+        <h2>Synthesis</h2>
+        <div class="control">
+            <label>Harmonicity <span id="val-harm">3.0</span></label>
+            <input type="range" id="harm-slider" min="0.5" max="10" step="0.5" value="3.0">
+        </div>
+        <div class="control">
+            <label>Mod Index <span id="val-mod">10</span></label>
+            <input type="range" id="mod-slider" min="0" max="50" step="1" value="10">
+        </div>
     </div>
 
-    <h2>Audio</h2>
-    <div class="control-group">
-        <label>Waveform</label>
-        <select id="waveSelector">
-            <option value="sine">Sine</option>
-            <option value="triangle">Triangle</option>
-            <option value="sawtooth">Sawtooth</option>
-        </select>
+    <div class="panel bottom-bar">
+        <div class="knob-box"><div class="knob-visual" id="knob-f"></div><label>Filter</label></div>
+        <div class="knob-box"><div class="knob-visual" id="knob-c"></div><label>Chaos</label></div>
+        <div class="knob-box"><div class="knob-visual" id="knob-p"></div><label>Pitch</label></div>
     </div>
-    <div class="control-group">
-        <label>Reverb</label>
-        <input type="range" id="reverbRange" min="0" max="1" step="0.1" value="0.5">
-    </div>
-    <div id="status" style="font-size: 10px; color: red;">Camera Offline</div>
 </div>
 
-<div id="video-container">
-    <video id="webcam" autoplay playsinline></video>
-</div>
+<div id="video-preview"><video id="webcam" hidden></video></div>
 
 <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 
-    // Оптимизация для мобильных: меньше частиц
-    const PARTICLE_COUNT = 4000;
-    let targetPositions = new Float32Array(PARTICLE_COUNT * 3);
-    let gScale = 1, gExp = 0.5;
-    const settings = { size: 0.05, morph: 0.06, shape: 'lorenz' };
+    // Состояние приложения
+    const state = {
+        numParticles: 10000,
+        currentShape: 'lorenz',
+        morphSpeed: 0.05,
+        gestureScale: 1,
+        gestureExp: 0,
+        chaos: 0
+    };
 
-    // THREE.JS
+    // --- Инициализация Three.js ---
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: false }); // Отключаем сглаживание для FPS
+    const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Ограничиваем пиксель-рейтио
     document.body.appendChild(renderer.domElement);
-    camera.position.z = 25;
+    threeCamera.position.z = 25;
 
     const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const positions = new Float32Array(state.numParticles * 3);
+    let targetPositions = new Float32Array(state.numParticles * 3);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    
-    const material = new THREE.PointsMaterial({
-        size: settings.size, color: 0x00ffcc, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
-    });
-    const particles = new THREE.Points(geometry, material);
-    scene.add(particles);
 
-    // AUDIO
+    const material = new THREE.PointsMaterial({
+        size: 0.02, color: 0xffffff, transparent: true,
+        blending: THREE.AdditiveBlending, opacity: 0.6, depthWrite: false
+    });
+    const points = new THREE.Points(geometry, material);
+    scene.add(points);
+
+    // --- Звуковой движок ---
     let synth, filter, reverb;
-    function initAudio() {
+    function startAudio() {
         filter = new Tone.Filter(1000, "lowpass").toDestination();
-        reverb = new Tone.Reverb({ decay: 2, wet: 0.5 }).connect(filter);
-        synth = new Tone.PolySynth(Tone.Synth).connect(reverb);
-        synth.set({ envelope: { attack: 0.1, release: 1.5 } });
+        reverb = new Tone.Reverb({ decay: 5, wet: 0.4 }).connect(filter);
+        synth = new Tone.PolySynth(Tone.FMSynth).connect(reverb);
+        synth.set({ harmonicity: 3, modulationIndex: 10 });
+        synth.triggerAttack(["C2", "C3"]);
         Tone.Destination.volume.value = -10;
-        synth.triggerAttack(["C3", "G3"]);
     }
 
-    // MATH
-    function generateAttractor() {
-        const arr = new Float32Array(PARTICLE_COUNT * 3);
-        let x = 0.1, y = 0, z = 0, dt = 0.015;
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
-            if (settings.shape === 'lorenz') {
+    // --- Математика аттракторов ---
+    function computeAttractor() {
+        const arr = new Float32Array(state.numParticles * 3);
+        let x = 0.1, y = 0, z = 0, dt = 0.01;
+        for (let i = 0; i < state.numParticles; i++) {
+            if (state.currentShape === 'lorenz') {
                 x += (10 * (y - x)) * dt; y += (x * (28 - z) - y) * dt; z += (x * y - (8/3) * z) * dt;
                 arr[i*3]=x*0.4; arr[i*3+1]=y*0.4; arr[i*3+2]=(z-25)*0.4;
-            } else if (settings.shape === 'halvorsen') {
+            } else if (state.currentShape === 'halvorsen') {
                 let dx = -1.4*x - 4*y - 4*z - y*y; let dy = -1.4*y - 4*z - 4*x - z*z; let dz = -1.4*z - 4*x - 4*y - x*x;
                 x+=dx*dt; y+=dy*dt; z+=dz*dt;
-                arr[i*3]=x*0.6; arr[i*3+1]=y*0.6; arr[i*3+2]=z*0.6;
-            } else {
-                let dx = (z-0.7)*x - 3.5*y; let dy = 3.5*x + (z-0.7)*y; let dz = 0.6 + 0.95*z - (z**3/3) - (x*x + y*y)*(1 + 0.25*z);
+                arr[i*3]=x*0.7; arr[i*3+1]=y*0.7; arr[i*3+2]=z*0.7;
+            } else if (state.currentShape === 'aizawa') {
+                let dx = (z-0.7)*x - 3.5*y; let dy = 3.5*x + (z-0.7)*y;
+                let dz = 0.6 + 0.95*z - (z**3/3) - (x*x + y*y)*(1 + 0.25*z) + 0.1*z*(x**3);
                 x+=dx*dt; y+=dy*dt; z+=dz*dt;
-                arr[i*3]=x*4; arr[i*3+1]=y*4; arr[i*3+2]=z*4;
+                arr[i*3]=x*4; arr[i*3+1]=y*4; arr[i*3+2]=z*3;
+            } else { // Sprott B
+                x += (0.4*y*z) * dt; y += (x - 1.2*y) * dt; z += (1 - x*y) * dt;
+                arr[i*3]=x*5; arr[i*3+1]=y*5; arr[i*3+2]=z*5;
             }
         }
         targetPositions = arr;
     }
 
-    // HANDS
-    const hands = new window.Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
-    hands.setOptions({ 
-        maxNumHands: 1, // Для мобилок лучше ограничить одной рукой для скорости
-        modelComplexity: 0, // Самая быстрая модель
-        minDetectionConfidence: 0.5 
-    });
+    // --- ИИ Камера и Руки ---
+    const hands = new window.Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5 });
     
     hands.onResults(results => {
         if (results.multiHandLandmarks && results.multiHandLandmarks[0]) {
-            document.getElementById('status').innerText = "AI Tracking Active";
-            document.getElementById('status').style.color = "#00ffcc";
-            let lm = results.multiHandLandmarks[0];
-            let dist = Math.hypot(lm[0].x - lm[12].x, lm[0].y - lm[12].y);
-            gExp = dist * 8;
+            const h1 = results.multiHandLandmarks[0];
+            // Tension (Сжатие кулака) -> Фильтр
+            const d = Math.hypot(h1[0].x - h1[12].x, h1[0].y - h1[12].y);
+            const tension = Math.min(Math.max((d - 0.1) / 0.3, 0), 1); // 0 (кулак) to 1 (ладонь)
+            
+            state.chaos = (1 - tension) * 5;
             if (synth) {
-                filter.frequency.rampTo(gExp * 1000 + 200, 0.1);
+                filter.frequency.rampTo(tension * 4000 + 100, 0.1);
+                document.getElementById('knob-f').style.transform = `rotate(${tension * 270}deg)`;
+                document.getElementById('knob-c').style.transform = `rotate(${(1-tension) * 270}deg)`;
+            }
+
+            // Две руки (Масштаб)
+            if (results.multiHandLandmarks[1]) {
+                const h2 = results.multiHandLandmarks[1];
+                state.gestureScale = Math.hypot(h1[0].x - h2[0].x, h1[0].y - h2[0].y) * 4;
+                synth.set({ detune: (state.gestureScale - 1) * 1200 });
+                document.getElementById('knob-p').style.transform = `rotate(${state.gestureScale * 60}deg)`;
             }
         }
     });
 
-    const cameraUtils = new window.Camera(document.getElementById('webcam'), {
-        onFrame: async () => { await hands.send({ image: document.getElementById('webcam') }); },
-        width: 480, height: 640,
-        facingMode: "user"
+    const videoElement = document.getElementById('webcam');
+    const mpCameraHelper = new window.Camera(videoElement, {
+        onFrame: async () => await hands.send({ image: videoElement }),
+        width: 640, height: 480
     });
 
-    // UI CONTROLS
-    document.getElementById('startBtn').onclick = () => {
-        Tone.start(); initAudio(); cameraUtils.start();
+    // --- Обработка интерфейса ---
+    document.getElementById('start-btn').onclick = () => {
+        Tone.start(); startAudio(); mpCameraHelper.start();
         document.getElementById('overlay').remove();
     };
 
-    document.getElementById('toggle-ui').onclick = () => {
-        document.getElementById('ui-panel').classList.toggle('active');
+    document.getElementById('shape-type').onchange = (e) => { state.currentShape = e.target.value; computeAttractor(); };
+    document.getElementById('morph-slider').oninput = (e) => { 
+        state.morphSpeed = parseFloat(e.target.value);
+        document.getElementById('val-morph').innerText = state.morphSpeed;
+    };
+    document.getElementById('harm-slider').oninput = (e) => {
+        synth.set({ harmonicity: parseFloat(e.target.value) });
+        document.getElementById('val-harm').innerText = e.target.value;
+    };
+    document.getElementById('mod-slider').oninput = (e) => {
+        synth.set({ modulationIndex: parseFloat(e.target.value) });
+        document.getElementById('val-mod').innerText = e.target.value;
     };
 
-    document.getElementById('shapeSelector').onchange = (e) => { settings.shape = e.target.value; generateAttractor(); };
-    document.getElementById('morphRange').oninput = (e) => { settings.morph = parseFloat(e.target.value); };
-    document.getElementById('waveSelector').onchange = (e) => { synth.set({ oscillator: { type: e.target.value } }); };
-
-    // ANIMATION
+    // --- Главный цикл анимации ---
     function animate() {
         requestAnimationFrame(animate);
-        const posAttr = geometry.attributes.position;
-        for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
-            posAttr.array[i] += (targetPositions[i] * gScale - posAttr.array[i]) * settings.morph;
+        const pos = geometry.attributes.position;
+        for (let i = 0; i < state.numParticles * 3; i++) {
+            const t = targetPositions[i] * state.gestureScale;
+            // Плавное движение к цели
+            pos.array[i] += (t - pos.array[i]) * state.morphSpeed;
+            // Добавление хаоса/вибрации
+            pos.array[i] += (Math.random() - 0.5) * (state.chaos * 0.02);
         }
-        posAttr.needsUpdate = true;
-        particles.rotation.y += 0.005;
-        renderer.render(scene, camera);
+        pos.needsUpdate = true;
+        points.rotation.y += 0.002;
+        renderer.render(scene, threeCamera);
     }
 
-    generateAttractor();
+    computeAttractor();
     animate();
 
     window.onresize = () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
+        threeCamera.aspect = window.innerWidth/window.innerHeight;
+        threeCamera.updateProjectionMatrix();
     };
 </script>
 </body>
