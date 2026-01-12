@@ -2,124 +2,137 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Monochrome Zen Synth</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Monochrome Zen</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
     
     <style>
-        :root { --accent: #ffffff; --bg: #000000; --panel: rgba(10, 10, 10, 0.9); }
-        body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Inter', sans-serif; color: #fff; }
-
-        /* Кнопка переключения интерфейса */
-        #menu-toggle {
-            position: absolute; top: 20px; left: 20px; z-index: 1000;
-            background: none; border: 1px solid #333; color: #666;
-            padding: 8px 15px; cursor: pointer; font-size: 10px; letter-spacing: 2px;
-            transition: 0.3s; pointer-events: auto;
+        :root { --accent: #ffffff; --bg: #000000; --ui-bg: rgba(0, 0, 0, 0.85); }
+        
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; background: var(--bg); 
+            font-family: 'Courier New', monospace; color: #fff;
         }
-        #menu-toggle:hover { border-color: #fff; color: #fff; }
 
-        /* Панель настроек (скрытая) */
+        /* 3D холст всегда на дне */
+        canvas { 
+            position: fixed; top: 0; left: 0; 
+            width: 100% !important; height: 100% !important; 
+            z-index: 1; 
+        }
+
+        /* Кнопка настроек */
+        #menu-toggle {
+            position: fixed; top: 20px; left: 20px; z-index: 1000;
+            background: none; border: 1px solid #444; color: #666;
+            padding: 10px 15px; cursor: pointer; font-size: 10px;
+            letter-spacing: 2px; text-transform: uppercase;
+        }
+
+        /* Оверлей настроек */
         #ui-overlay {
-            position: absolute; inset: 0; pointer-events: none;
-            display: flex; flex-direction: column; justify-content: space-between;
-            padding: 60px 40px; opacity: 0; transition: opacity 0.4s ease;
+            position: fixed; inset: 0; z-index: 500;
+            background: var(--ui-bg);
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; gap: 30px;
+            opacity: 0; pointer-events: none; transition: 0.4s;
         }
         #ui-overlay.visible { opacity: 1; pointer-events: auto; }
 
-        .top-row { display: flex; gap: 40px; }
-        .bottom-row { display: flex; justify-content: center; gap: 60px; align-items: flex-end; }
+        .control-group { width: 80%; max-width: 400px; display: flex; flex-direction: column; gap: 20px; }
+        .fader-row { display: flex; flex-direction: column; gap: 10px; }
+        .fader-row label { font-size: 10px; letter-spacing: 2px; color: #888; text-transform: uppercase; }
 
-        .group { display: flex; flex-direction: column; gap: 15px; }
-        h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 3px; color: #444; margin: 0; }
-
-        /* Вертикальные фейдеры */
-        .fader-box { display: flex; flex-direction: column; align-items: center; gap: 15px; }
-        .fader-box label { font-size: 9px; text-transform: uppercase; color: #666; }
-        
-        input[type="range"].vertical {
-            writing-mode: bt-lr; /* For Firefox */
-            -webkit-appearance: slider-vertical; /* For Chrome */
-            width: 4px; height: 150px; background: #222; outline: none;
+        /* Кастомные монохромные ползунки */
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%; background: transparent;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            width: 100%; height: 1px; background: #333;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; 
+            background: #fff; border-radius: 50%; cursor: pointer; margin-top: -8px;
+            border: 1px solid #000;
+        }
+        input[type="range"]::-moz-range-thumb {
+            height: 16px; width: 16px; background: #fff; border-radius: 50%; border: none;
         }
 
         select {
-            background: none; border: 1px solid #333; color: #fff;
-            padding: 10px; font-size: 11px; width: 150px;
+            background: #000; border: 1px solid #333; color: #fff;
+            padding: 12px; font-size: 12px; width: 100%;
         }
 
-        /* Видео-превью (еле заметное) */
-        #video-container {
-            position: absolute; top: 20px; right: 20px;
-            width: 80px; height: 60px; border: 1px solid #222;
-            opacity: 0.1; transform: scaleX(-1);
+        /* Видео скрыто, но работает для ИИ */
+        #webcam {
+            position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;
         }
 
         #start-screen {
             position: fixed; inset: 0; background: #000; z-index: 2000;
-            display: flex; justify-content: center; align-items: center;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
         }
         #start-btn {
             background: none; border: 1px solid #fff; color: #fff;
-            padding: 20px 60px; cursor: pointer; letter-spacing: 10px; transition: 0.5s;
+            padding: 20px 40px; cursor: pointer; letter-spacing: 5px; font-size: 14px;
         }
-        #start-btn:hover { background: #fff; color: #000; box-shadow: 0 0 50px rgba(255,255,255,0.2); }
     </style>
 </head>
 <body>
 
 <div id="start-screen">
-    <button id="start-btn">ENTER SYSTEM</button>
+    <button id="start-btn">INITIALIZE CORE</button>
 </div>
 
-<button id="menu-toggle">SETTINGS</button>
+<button id="menu-toggle">Settings</button>
 
 <div id="ui-overlay">
-    <div class="top-row">
-        <div class="group">
-            <h2>Geometry</h2>
+    <div class="control-group">
+        <div class="fader-row">
+            <label>Shape</label>
             <select id="shape-select">
-                <option value="lorenz">LORENZ</option>
-                <option value="halvorsen">HALVORSEN</option>
-                <option value="aizawa">AIZAWA</option>
-                <option value="sprottB">SPROTT B</option>
+                <option value="lorenz">Lorenz</option>
+                <option value="halvorsen">Halvorsen</option>
+                <option value="aizawa">Aizawa</option>
+                <option value="sprottB">Sprott B</option>
             </select>
-            <div class="fader-box">
-                <label>Morph</label>
-                <input type="range" id="morph-slider" min="0.01" max="0.2" step="0.01" value="0.05">
-            </div>
         </div>
-    </div>
+        
+        <div class="fader-row">
+            <label>Morph Speed</label>
+            <input type="range" id="morph-slider" min="0.01" max="0.2" step="0.01" value="0.05">
+        </div>
 
-    <div class="bottom-row">
-        <div class="fader-box">
+        <div class="fader-row">
             <label>Harmonicity</label>
-            <input type="range" class="vertical" id="harm-fader" min="0.5" max="12" step="0.1" value="3">
+            <input type="range" id="harm-fader" min="0.5" max="10" step="0.1" value="3">
         </div>
-        <div class="fader-box">
-            <label>Mod Index</label>
-            <input type="range" class="vertical" id="mod-fader" min="0" max="60" step="1" value="10">
+
+        <div class="fader-row">
+            <label>Modulation</label>
+            <input type="range" id="mod-fader" min="0" max="50" step="1" value="10">
         </div>
-        <div class="fader-box">
-            <label>Filter</label>
-            <input type="range" class="vertical" id="filter-fader" min="0" max="1" step="0.01" value="0.5">
+
+        <div class="fader-row">
+            <label>Space (Reverb)</label>
+            <input type="range" id="verb-fader" min="0" max="1" step="0.05" value="0.4">
         </div>
-        <div class="fader-box">
-            <label>Reverb</label>
-            <input type="range" class="vertical" id="verb-fader" min="0" max="1" step="0.01" value="0.4">
-        </div>
+        
+        <button onclick="document.getElementById('ui-overlay').classList.remove('visible')" style="background: #fff; color:#000; border:none; padding:10px; margin-top:20px; cursor:pointer;">CLOSE</button>
     </div>
 </div>
 
-<div id="video-container"><video id="webcam" hidden></video></div>
+<video id="webcam" autoplay playsinline muted></video>
 
 <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 
     const STATE = {
-        count: 15000,
+        count: window.innerWidth < 600 ? 5000 : 12000, // Оптимизация для мобилок
         shape: 'lorenz',
         morph: 0.05,
         gScale: 1,
@@ -129,8 +142,9 @@
     // --- THREE.JS ---
     const scene = new THREE.Scene();
     const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: false }); // Выключил antialias для FPS
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     document.body.appendChild(renderer.domElement);
     threeCamera.position.z = 25;
 
@@ -140,8 +154,8 @@
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 0.015, color: 0xffffff, transparent: true,
-        blending: THREE.AdditiveBlending, opacity: 0.5, depthWrite: false
+        size: 0.02, color: 0xffffff, transparent: true,
+        blending: THREE.AdditiveBlending, opacity: 0.6, depthWrite: false
     });
     const points = new THREE.Points(geometry, material);
     scene.add(points);
@@ -150,16 +164,16 @@
     let synth, filter, reverb;
     function initAudio() {
         filter = new Tone.Filter(2000, "lowpass").toDestination();
-        reverb = new Tone.Reverb({ decay: 6, wet: 0.4 }).connect(filter);
+        reverb = new Tone.Reverb({ decay: 5, wet: 0.4 }).connect(filter);
         synth = new Tone.PolySynth(Tone.FMSynth).connect(reverb);
         synth.triggerAttack(["C2", "G2"]);
         Tone.Destination.volume.value = -12;
     }
 
-    // --- MATH ---
+    // --- ATTRACTORS ---
     function updateTargets() {
         const arr = new Float32Array(STATE.count * 3);
-        let x = 0.1, y = 0, z = 0, dt = 0.008;
+        let x = 0.1, y = 0, z = 0, dt = 0.01;
         for (let i = 0; i < STATE.count; i++) {
             if (STATE.shape === 'lorenz') {
                 x += (10 * (y - x)) * dt; y += (x * (28 - z) - y) * dt; z += (x * y - (8/3) * z) * dt;
@@ -183,7 +197,11 @@
 
     // --- HANDS ---
     const hands = new window.Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5 });
+    hands.setOptions({ 
+        maxNumHands: 2, 
+        modelComplexity: window.innerWidth < 600 ? 0 : 1, // 0 - быстрее для мобилок
+        minDetectionConfidence: 0.5 
+    });
     
     hands.onResults(res => {
         if (res.multiHandLandmarks && res.multiHandLandmarks[0]) {
@@ -194,8 +212,6 @@
             STATE.chaos = (1 - tension) * 4;
             if (synth) {
                 filter.frequency.rampTo(tension * 5000 + 100, 0.1);
-                // Синхронизируем ползунок фильтра с рукой
-                document.getElementById('filter-fader').value = tension;
             }
 
             if (res.multiHandLandmarks[1]) {
@@ -208,25 +224,24 @@
 
     const mpCamera = new window.Camera(document.getElementById('webcam'), {
         onFrame: async () => await hands.send({ image: document.getElementById('webcam') }),
-        width: 640, height: 480
+        width: 640, height: 480,
+        facingMode: "user"
     });
 
-    // --- UI EVENTS ---
+    // --- UI ---
     document.getElementById('start-btn').onclick = () => {
         Tone.start(); initAudio(); mpCamera.start();
-        document.getElementById('start-screen').remove();
+        document.getElementById('start-screen').style.display = 'none';
     };
 
     document.getElementById('menu-toggle').onclick = () => {
-        const overlay = document.getElementById('ui-overlay');
-        overlay.classList.toggle('visible');
+        document.getElementById('ui-overlay').classList.toggle('visible');
     };
 
     document.getElementById('shape-select').onchange = (e) => { STATE.shape = e.target.value; updateTargets(); };
     document.getElementById('morph-slider').oninput = (e) => { STATE.morph = parseFloat(e.target.value); };
     document.getElementById('harm-fader').oninput = (e) => { synth.set({ harmonicity: parseFloat(e.target.value) }); };
     document.getElementById('mod-fader').oninput = (e) => { synth.set({ modulationIndex: parseFloat(e.target.value) }); };
-    document.getElementById('filter-fader').oninput = (e) => { filter.frequency.rampTo(parseFloat(e.target.value) * 5000 + 100, 0.1); };
     document.getElementById('verb-fader').oninput = (e) => { reverb.wet.value = parseFloat(e.target.value); };
 
     // --- LOOP ---
@@ -239,7 +254,7 @@
             pos.array[i] += (Math.random() - 0.5) * (STATE.chaos * 0.015);
         }
         pos.needsUpdate = true;
-        points.rotation.y += 0.002;
+        points.rotation.y += 0.003;
         renderer.render(scene, threeCamera);
     }
 
