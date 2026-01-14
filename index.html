@@ -5,19 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Monochrome AI Synth</title>
     
+    <!-- Глобальные скрипты (самый стабильный способ) -->
+    <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.js"></script>
+    
     <style>
         :root { --accent: #ffffff; --bg: #000000; }
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; color: #fff; }
-        canvas { position: fixed; inset: 0; z-index: 1; }
+        canvas { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
 
         #video-hud {
             position: fixed; top: 15px; right: 15px;
             width: 120px; height: 90px;
-            border: 1px solid #333; background: #000;
+            border: 1px solid #333; background: #111;
             z-index: 100; transform: scaleX(-1);
-            display: none;
+            display: none; align-items: center; justify-content: center; font-size: 8px; color: #444;
         }
-        video { width: 100%; height: 100%; object-fit: cover; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: cover; }
 
         #menu-toggle {
             position: fixed; top: 15px; left: 15px; z-index: 500;
@@ -26,10 +30,9 @@
         }
 
         #ui-overlay {
-            position: fixed; inset: 0; z-index: 400;
-            background: rgba(0, 0, 0, 0.95);
-            display: flex; flex-direction: column; justify-content: center;
-            align-items: center; opacity: 0; pointer-events: none; transition: 0.3s;
+            position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, 0.95);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            opacity: 0; pointer-events: none; transition: 0.3s;
         }
         #ui-overlay.visible { opacity: 1; pointer-events: auto; }
 
@@ -39,32 +42,35 @@
 
         input[type="range"] { -webkit-appearance: none; width: 100%; background: transparent; }
         input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 1px; background: #333; }
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none; height: 18px; width: 18px; 
-            background: #fff; border-radius: 50%; cursor: pointer; margin-top: -9px; border: 2px solid #000;
-        }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; background: #fff; border-radius: 50%; cursor: pointer; margin-top: -9px; border: 2px solid #000; }
 
         select { background: #000; border: 1px solid #333; color: #fff; padding: 12px; font-size: 11px; width: 100%; border-radius: 0; outline: none; }
 
         #start-screen { position: fixed; inset: 0; background: #000; z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
         #start-btn { background: none; border: 1px solid #fff; color: #fff; padding: 20px 40px; cursor: pointer; letter-spacing: 5px; font-weight: bold; margin-bottom: 20px; }
-        #status-text { font-size: 10px; color: #444; text-transform: uppercase; line-height: 1.5; padding: 0 20px; }
+        #status-text { font-size: 10px; color: #444; text-transform: uppercase; line-height: 1.5; padding: 0 20px; white-space: pre-wrap; }
+        .mode-label { position: fixed; bottom: 20px; left: 20px; font-size: 9px; color: #333; z-index: 100; letter-spacing: 2px; }
     </style>
 </head>
 <body>
 
 <div id="start-screen">
     <button id="start-btn">INITIALIZE SYSTEM</button>
-    <div id="status-text">Ready. HTTPS or Localhost required for AI.</div>
+    <div id="status-text">Ready. HTTPS or Localhost required.
+Mouse fallback enabled if no camera.</div>
 </div>
 
-<div id="video-hud"><video id="webcam" autoplay playsinline muted></video></div>
-<button id="menu-toggle">MODULES</button>
+<div id="video-hud">
+    <video id="webcam" autoplay playsinline muted></video>
+</div>
+
+<button id="menu-toggle">SETTINGS</button>
+<div id="current-mode" class="mode-label">MODE: IDLE</div>
 
 <div id="ui-overlay">
     <div class="controls">
         <div class="fader">
-            <label>Geometry</label>
+            <label>Geometry Pattern</label>
             <select id="shape-select">
                 <option value="lorenz">Lorenz</option>
                 <option value="halvorsen">Halvorsen</option>
@@ -80,26 +86,19 @@
             </select>
         </div>
         <div class="fader">
-            <label>Morph Speed</label>
-            <input type="range" id="morph-slider" min="0.01" max="0.3" step="0.01" value="0.07">
-        </div>
-        <div class="fader">
-            <label>Density</label>
-            <input type="range" id="density-slider" min="5000" max="30000" step="1000" value="20000">
+            <label>Particle Density</label>
+            <input type="range" id="density-slider" min="5000" max="40000" step="1000" value="20000">
         </div>
         <button onclick="document.getElementById('ui-overlay').classList.remove('visible')" style="background:#fff; color:#000; border:none; padding:12px; cursor:pointer; font-size:9px; font-weight:bold; letter-spacing:2px;">BACK</button>
     </div>
 </div>
 
 <script type="module">
-    // --- Прямой импорт библиотек как модулей ---
     import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
-    import * as Tone from 'https://unpkg.com/tone@14.7.77/build/Tone.js';
-    import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs";
 
     // Состояние
-    let PARTICLE_COUNT = window.innerWidth < 600 ? 8000 : 20000;
-    const STATE = { shape: 'lorenz', morph: 0.07, gScale: 1, chaos: 0, tension: 0.5 };
+    let PARTICLE_COUNT = window.innerWidth < 600 ? 8000 : 25000;
+    const STATE = { shape: 'lorenz', morph: 0.08, gScale: 1, chaos: 0, tension: 0.5, useMouse: false };
 
     // --- THREE.JS ---
     const scene = new THREE.Scene();
@@ -114,23 +113,18 @@
     let positions = new Float32Array(PARTICLE_COUNT * 3);
     let targetPositions = new Float32Array(PARTICLE_COUNT * 3);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    const material = new THREE.PointsMaterial({
-        size: 0.03, color: 0xffffff, transparent: true,
-        blending: THREE.AdditiveBlending, opacity: 0.6, depthWrite: false
-    });
-    let points = new THREE.Points(geometry, material);
+    const material = new THREE.PointsMaterial({ size: 0.03, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, opacity: 0.6, depthWrite: false });
+    const points = new THREE.Points(geometry, material);
     scene.add(points);
 
-    // --- AUDIO ---
-    let synth, filter, reverb;
+    // --- AUDIO (Используем глобальный Tone) ---
+    let synth, filter;
     function initAudio() {
-        filter = new Tone.Filter(2000, "lowpass").toDestination();
-        reverb = new Tone.Reverb({ decay: 5, wet: 0.5 }).connect(filter);
-        synth = new Tone.PolySynth(Tone.FMSynth).connect(reverb);
-        synth.set({ harmonicity: 2, modulationIndex: 10 });
+        filter = new window.Tone.Filter(2000, "lowpass").toDestination();
+        const reverb = new window.Tone.Reverb({ decay: 5, wet: 0.5 }).connect(filter);
+        synth = new window.Tone.PolySynth(window.Tone.FMSynth).connect(reverb);
         synth.triggerAttack(["C2", "G2"]);
-        Tone.Destination.volume.value = -10;
+        window.Tone.Destination.volume.value = -12;
     }
 
     // --- MATH ---
@@ -143,97 +137,86 @@
                 arr[i*3]=x*0.4; arr[i*3+1]=y*0.4; arr[i*3+2]=(z-25)*0.4;
             } else if (STATE.shape === 'halvorsen') {
                 let dx = -1.4*x-4*y-4*z-y*y; let dy = -1.4*y-4*z-4*x-z*z; let dz = -1.4*z-4*x-4*y-x*x;
-                x+=dx*dt; y+=dy*dt; z+=dz*dt;
-                arr[i*3]=x*0.7; arr[i*3+1]=y*0.7; arr[i*3+2]=z*0.7;
+                x+=dx*dt; y+=dy*dt; z+=dz*dt; arr[i*3]=x*0.7; arr[i*3+1]=y*0.7; arr[i*3+2]=z*0.7;
             } else {
                 let dx = (z-0.7)*x-3.5*y; let dy = 3.5*x+(z-0.7)*y; let dz = 0.6+0.95*z-(z**3/3)-(x*x+y*y)*(1+0.25*z);
-                x+=dx*dt; y+=dy*dt; z+=dz*dt;
-                arr[i*3]=x*4; arr[i*3+1]=y*4; arr[i*3+2]=z*3;
+                x+=dx*dt; y+=dy*dt; z+=dz*dt; arr[i*3]=x*4; arr[i*3+1]=y*4; arr[i*3+2]=z*3;
             }
         }
         targetPositions = arr;
     }
 
-    // --- AI LANDMARKER ---
+    // --- AI (Используем глобальный tasksVision) ---
     let handLandmarker;
     let videoTime = -1;
     const video = document.getElementById('webcam');
 
     async function initAI() {
-        const vision = await FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-        );
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: {
-                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-                delegate: "GPU"
-            },
-            runningMode: "VIDEO",
-            numHands: 2
+        const vision = await window.tasksVision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+        handLandmarker = await window.tasksVision.HandLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate: "GPU" },
+            runningMode: "VIDEO", numHands: 2
         });
     }
 
-    function runAI() {
-        if (!handLandmarker || video.readyState !== 4) return;
-        if (video.currentTime !== videoTime) {
-            videoTime = video.currentTime;
-            const res = handLandmarker.detectForVideo(video, performance.now());
-            
-            if (res.landmarks && res.landmarks[0]) {
-                const h1 = res.landmarks[0];
-                const d = Math.hypot(h1[0].x - h1[12].x, h1[0].y - h1[12].y);
-                STATE.tension = Math.min(Math.max((d - 0.08) / 0.35, 0), 1);
-                STATE.chaos = (1 - STATE.tension) * 5;
-                material.size = 0.015 + (STATE.tension * 0.04);
-
-                if (synth) {
-                    filter.frequency.rampTo(STATE.tension * 5000 + 150, 0.1);
-                    synth.set({ modulationIndex: (1 - STATE.tension) * 35 });
-                }
-
-                if (res.landmarks.length === 2) {
-                    const h2 = res.landmarks[1];
-                    STATE.gScale = Math.hypot(h1[0].x - h2[0].x, h1[0].y - h2[0].y) * 5;
-                    synth.set({ detune: (STATE.gScale - 1) * 1200 });
-                }
-            }
+    // --- CONTROL UPDATER ---
+    function updateControls(tension, scale) {
+        STATE.tension = tension;
+        STATE.gScale = scale;
+        STATE.chaos = (1 - tension) * 5;
+        if (synth) {
+            filter.frequency.rampTo(tension * 5000 + 150, 0.1);
+            synth.set({ modulationIndex: (1 - tension) * 35 });
+            synth.set({ detune: (scale - 1) * 1200 });
         }
     }
 
-    // --- UI START ---
+    // --- MOUSE fallbacks ---
+    window.addEventListener('mousemove', (e) => {
+        if (!STATE.useMouse) return;
+        const t = e.clientX / window.innerWidth;
+        const s = 0.5 + (1 - e.clientY / window.innerHeight) * 3.5;
+        updateControls(t, s);
+    });
+
+    // --- INITIALIZE ---
     document.getElementById('start-btn').onclick = async () => {
         const status = document.getElementById('status-text');
         try {
-            status.innerText = "Requesting Camera...";
-            let stream;
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-            } catch(e) {
-                stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            }
-            video.srcObject = stream;
-
             status.innerText = "Waking up Audio...";
-            await Tone.start();
+            // Явный вызов глобального Tone.start()
+            if (typeof window.Tone.start === 'function') {
+                await window.Tone.start();
+            }
             initAudio();
-
-            status.innerText = "Downloading AI Core...";
-            await initAI();
+            updateTargets();
             
+            try {
+                status.innerText = "Connecting Camera...";
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                status.innerText = "Loading AI Core...";
+                await initAI();
+                document.getElementById('video-hud').style.display = 'block';
+                document.getElementById('current-mode').innerText = "MODE: AI HANDS";
+            } catch (e) {
+                console.warn("Camera fallback to mouse");
+                STATE.useMouse = true;
+                document.getElementById('current-mode').innerText = "MODE: MOUSE (No Camera)";
+            }
+
             document.getElementById('start-screen').style.display = 'none';
-            document.getElementById('video-hud').style.display = 'block';
-        } catch (e) {
-            status.innerText = "FATAL ERROR:\n" + e.message + "\n\nUse HTTPS or Localhost.";
+        } catch (err) {
             status.style.color = "red";
-            console.error(e);
+            status.innerText = "FATAL ERROR:\n" + err.name + ": " + err.message;
+            console.error(err);
         }
     };
 
-    // Listeners
+    // UI Listeners
     document.getElementById('menu-toggle').onclick = () => document.getElementById('ui-overlay').classList.toggle('visible');
     document.getElementById('shape-select').onchange = (e) => { STATE.shape = e.target.value; updateTargets(); };
     document.getElementById('wave-select').onchange = (e) => { synth.set({ oscillator: { type: e.target.value } }); };
-    document.getElementById('morph-slider').oninput = (e) => STATE.morph = parseFloat(e.target.value);
     document.getElementById('density-slider').onchange = (e) => {
         PARTICLE_COUNT = parseInt(e.target.value);
         positions = new Float32Array(PARTICLE_COUNT * 3);
@@ -243,7 +226,22 @@
 
     function animate() {
         requestAnimationFrame(animate);
-        runAI();
+        
+        if (handLandmarker && video.readyState === 4 && video.currentTime !== videoTime) {
+            videoTime = video.currentTime;
+            const res = handLandmarker.detectForVideo(video, performance.now());
+            if (res.landmarks && res.landmarks[0]) {
+                const h = res.landmarks[0];
+                const d = Math.hypot(h[0].x - h[12].x, h[0].y - h[12].y);
+                const t = Math.min(Math.max((d - 0.08) / 0.35, 0), 1);
+                let s = STATE.gScale;
+                if (res.landmarks[1]) {
+                    const h2 = res.landmarks[1];
+                    s = Math.hypot(h[0].x - h2[0].x, h[0].y - h2[0].y) * 5;
+                }
+                updateControls(t, s);
+            }
+        }
 
         const pos = geometry.attributes.position;
         for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
@@ -252,11 +250,9 @@
             pos.array[i] += (Math.random() - 0.5) * (STATE.chaos * 0.02);
         }
         pos.needsUpdate = true;
-        points.rotation.y += 0.003 + (STATE.tension * 0.005);
+        points.rotation.y += 0.003;
         renderer.render(scene, camera3D);
     }
-
-    updateTargets();
     animate();
 
     window.onresize = () => {
